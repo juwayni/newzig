@@ -1,0 +1,11 @@
+import std
+
+fn add = (a: i32, b: i32) => a + b
+
+fn main = (alloc: std.mem.Allocator) => {
+    var list = std.ArrayList<i32>.init(alloc)
+    list.append(10)?
+    list.append(20)?
+    std.debug.print("List length: {d}\n", .{list.items.len})
+    0
+}

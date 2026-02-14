@@ -1,0 +1,26 @@
+import std
+
+union Shape {
+    Circle(f32),
+    Square(f32),
+    None
+}
+
+fn getArea = (shape: Shape): f32 => {
+    match shape {
+        Circle(r) => r * r * 3.14,
+        Square(s) => s * s,
+        None => 0.0,
+    }
+}
+
+fn main = (alloc: std.mem.Allocator) => {
+    _ = alloc
+    // How to initialize a union in Zen?
+    // In Zig: Shape{ .Circle = 10.0 }
+    // Let's use StructInitialization syntax but for unions.
+    let c = Shape{ Circle: 10.0 }
+    let area = getArea(c)
+    std.debug.print("Area: {d}\n", .{area})
+    0
+}

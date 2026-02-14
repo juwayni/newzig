@@ -1,0 +1,11 @@
+import std
+
+fn main = (alloc: std.mem.Allocator) => {
+    var list = std.ArrayList<i32>.init(alloc)
+    defer list.deinit()
+
+    list.append(100)?
+    std.debug.print("List length inside: {d}\n", .{list.items.len})
+
+    0
+}

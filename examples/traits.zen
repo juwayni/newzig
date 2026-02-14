@@ -1,0 +1,27 @@
+import std
+
+trait Logger {
+    fn log(self: *Self, msg: []const u8): void;
+}
+
+struct MyLogger {
+    id: i32
+}
+
+impl Logger for MyLogger {
+    fn log = (self: *MyLogger, msg: []const u8): void => {
+        std.debug.print("Logger {d}: {s}\n", .{self.id, msg})
+    }
+}
+
+fn useLogger = (comptime T: type, logger: *T): void => {
+    require T: Logger
+    logger.log("Hello from trait")
+}
+
+fn main = (alloc: std.mem.Allocator) => {
+    _ = alloc
+    var l = MyLogger{ id: 42 }
+    useLogger(MyLogger, &l)
+    0
+}

@@ -1,0 +1,15 @@
+import std
+
+fn main = (alloc: std.mem.Allocator) => {
+    _ = alloc
+    let x = @as(i32, 100)
+    let y = @as(i32, 200)
+    let sum = x + y
+    std.debug.print("Sum: {d}\n", .{sum})
+
+    // Test some other builtins
+    let ptr: *i32? = @ptrFromInt(0)
+    _ = ptr
+
+    0
+}
