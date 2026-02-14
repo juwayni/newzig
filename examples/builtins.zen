@@ -8,7 +8,7 @@ fn main = (alloc: std.mem.Allocator) => {
     std.debug.print("Sum: {d}\n", .{sum})
 
     // Test some other builtins
-    let ptr: *i32? = @ptrFromInt(0)
+    let ptr: ?*i32 = @ptrFromInt(0)
     _ = ptr
 
     0

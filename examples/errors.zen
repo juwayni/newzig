@@ -1,0 +1,23 @@
+import std
+
+fn failIfEven = (n: i32): !i32 => {
+    if @rem(n, 2) == 0 {
+        return error.EvenNumber
+    }
+    n
+}
+
+fn main = (alloc: std.mem.Allocator) => {
+    _ = alloc
+    let x: ?i32 = null
+    let y = x ?? 100
+    std.debug.print("y is {d}\n", .{y})
+
+    // Test catch with capture
+    let res = failIfEven(10) catch err => {
+        std.debug.print("Caught error: {}\n", .{err});
+        -1
+    }
+    std.debug.print("res is {d}\n", .{res})
+    0
+}

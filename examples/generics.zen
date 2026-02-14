@@ -1,0 +1,16 @@
+import std
+
+struct Box<T> {
+    value: T
+}
+
+fn createBox<T> = (val: T): Box<T> => {
+    Box<T>{ value: val }
+}
+
+fn main = (alloc: std.mem.Allocator) => {
+    _ = alloc
+    let b = createBox<i32>(42)
+    std.debug.print("Box value: {d}\n", .{b.value})
+    0
+}

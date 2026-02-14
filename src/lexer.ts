@@ -1,12 +1,13 @@
 export enum TokenType {
-    Fn, Let, Var, Import, Struct, Enum, Union, Match, If, Else, Return, Trait, Impl, For, Comptime, Self, Require, Const,
+    Fn, Let, Var, Import, Struct, Enum, Union, Match, If, Else, Return, Trait, Impl, For, While, In, Pub, Catch, Comptime, Self, Require, Const,
     Defer, ErrDefer,
     Extern, Export, Packed, Align, NoAlias, CallConv, ThreadLocal, Zig, Macro,
     Identifier, Number, String, Builtin,
     Equals, Arrow, BraceOpen, BraceClose, ParenOpen, ParenClose,
-    AngleOpen, AngleClose, Question, Dot, Comma, Colon, Semicolon, Ampersand, Bang,
+    Question, DoubleQuestion, Dot, Comma, Colon, Semicolon, Ampersand, Bang,
     BracketOpen, BracketClose,
-    Plus, Minus, Star, Slash,
+    Plus, Minus, Star, Slash, Percent,
+    Less, Greater, LessEqual, GreaterEqual, EqualEqual, BangEqual,
     EOF
 }
 
@@ -124,6 +125,10 @@ export class Lexer {
             "trait": TokenType.Trait,
             "impl": TokenType.Impl,
             "for": TokenType.For,
+            "while": TokenType.While,
+            "in": TokenType.In,
+            "pub": TokenType.Pub,
+            "catch": TokenType.Catch,
             "comptime": TokenType.Comptime,
             "Self": TokenType.Self,
             "require": TokenType.Require,
@@ -188,18 +193,30 @@ export class Lexer {
             this.advance();
             return { type: TokenType.Arrow, value: "=>", line: startLine, col: startCol, pos: startPos };
         }
+        if (char === "=" && next === "=") {
+            this.advance();
+            return { type: TokenType.EqualEqual, value: "==", line: startLine, col: startCol, pos: startPos };
+        }
         if (char === "=") return { type: TokenType.Equals, value: "=", line: startLine, col: startCol, pos: startPos };
         if (char === "{") return { type: TokenType.BraceOpen, value: "{", line: startLine, col: startCol, pos: startPos };
         if (char === "}") return { type: TokenType.BraceClose, value: "}", line: startLine, col: startCol, pos: startPos };
         if (char === "(") return { type: TokenType.ParenOpen, value: "(", line: startLine, col: startCol, pos: startPos };
         if (char === ")") return { type: TokenType.ParenClose, value: ")", line: startLine, col: startCol, pos: startPos };
-        if (char === "<") return { type: TokenType.AngleOpen, value: "<", line: startLine, col: startCol, pos: startPos };
-        if (char === ">") return { type: TokenType.AngleClose, value: ">", line: startLine, col: startCol, pos: startPos };
-        if (char === "?") return { type: TokenType.Question, value: "?", line: startLine, col: startCol, pos: startPos };
+        if (char === "?") {
+            if (next === "?") {
+                this.advance();
+                return { type: TokenType.DoubleQuestion, value: "??", line: startLine, col: startCol, pos: startPos };
+            }
+            return { type: TokenType.Question, value: "?", line: startLine, col: startCol, pos: startPos };
+        }
         if (char === ".") return { type: TokenType.Dot, value: ".", line: startLine, col: startCol, pos: startPos };
         if (char === ",") return { type: TokenType.Comma, value: ",", line: startLine, col: startCol, pos: startPos };
         if (char === ":") return { type: TokenType.Colon, value: ":", line: startLine, col: startCol, pos: startPos };
         if (char === ";") return { type: TokenType.Semicolon, value: ";", line: startLine, col: startCol, pos: startPos };
+        if (char === "!" && next === "=") {
+            this.advance();
+            return { type: TokenType.BangEqual, value: "!=", line: startLine, col: startCol, pos: startPos };
+        }
         if (char === "!") return { type: TokenType.Bang, value: "!", line: startLine, col: startCol, pos: startPos };
         if (char === "&") return { type: TokenType.Ampersand, value: "&", line: startLine, col: startCol, pos: startPos };
         if (char === "[") return { type: TokenType.BracketOpen, value: "[", line: startLine, col: startCol, pos: startPos };
@@ -208,6 +225,21 @@ export class Lexer {
         if (char === "-") return { type: TokenType.Minus, value: "-", line: startLine, col: startCol, pos: startPos };
         if (char === "*") return { type: TokenType.Star, value: "*", line: startLine, col: startCol, pos: startPos };
         if (char === "/") return { type: TokenType.Slash, value: "/", line: startLine, col: startCol, pos: startPos };
+        if (char === "%") return { type: TokenType.Percent, value: "%", line: startLine, col: startCol, pos: startPos };
+        if (char === "<") {
+            if (next === "=") {
+                this.advance();
+                return { type: TokenType.LessEqual, value: "<=", line: startLine, col: startCol, pos: startPos };
+            }
+            return { type: TokenType.Less, value: "<", line: startLine, col: startCol, pos: startPos };
+        }
+        if (char === ">") {
+            if (next === "=") {
+                this.advance();
+                return { type: TokenType.GreaterEqual, value: ">=", line: startLine, col: startCol, pos: startPos };
+            }
+            return { type: TokenType.Greater, value: ">", line: startLine, col: startCol, pos: startPos };
+        }
 
         return null;
     }

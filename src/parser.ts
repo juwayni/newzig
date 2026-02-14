@@ -46,6 +46,7 @@ export class Parser {
     private parseModifiers(): string[] {
         const modifiers: string[] = [];
         const modifierTokens = [
+            TokenType.Pub,
             TokenType.Extern, TokenType.Export, TokenType.Packed,
             TokenType.Align, TokenType.NoAlias, TokenType.CallConv,
             TokenType.ThreadLocal
@@ -113,6 +114,15 @@ export class Parser {
     private parseFunction(): AST.FunctionDeclaration {
         this.expect(TokenType.Fn, "Expected 'fn'");
         const name = this.expect(TokenType.Identifier, "Expected function name").value;
+
+        const genericParams: string[] = [];
+        if (this.match(TokenType.Less)) {
+            do {
+                genericParams.push(this.expect(TokenType.Identifier, "Expected generic parameter name").value);
+            } while (this.match(TokenType.Comma));
+            this.expect(TokenType.Greater, "Expected '>'");
+        }
+
         this.expect(TokenType.Equals, "Expected '='");
         this.expect(TokenType.ParenOpen, "Expected '('");
         const params: AST.Parameter[] = [];
@@ -138,11 +148,18 @@ export class Parser {
         this.expect(TokenType.Arrow, "Expected '=>'");
         const body = this.parseBlockOrExpression();
 
-        return { type: "FunctionDeclaration", name, params, returnType, body };
+        return { type: "FunctionDeclaration", name, genericParams: genericParams.length > 0 ? genericParams : undefined, params, returnType, body };
     }
 
     private parseType(): AST.Type {
+        let isOptional = false;
+        if (this.match(TokenType.Question)) {
+            isOptional = true;
+        }
         let prefix = "";
+        if (this.match(TokenType.Bang)) {
+            prefix = "!";
+        }
         if (this.match(TokenType.Star)) {
             prefix = "*";
             if (this.match(TokenType.Const)) {
@@ -171,16 +188,11 @@ export class Parser {
         name = prefix + name;
 
         const genericArgs: AST.Type[] = [];
-        if (this.match(TokenType.AngleOpen)) {
+        if (this.match(TokenType.Less)) {
             do {
                 genericArgs.push(this.parseType());
             } while (this.match(TokenType.Comma));
-            this.expect(TokenType.AngleClose, "Expected '>'");
-        }
-
-        let isOptional = false;
-        if (this.match(TokenType.Question)) {
-            isOptional = true;
+            this.expect(TokenType.Greater, "Expected '>'");
         }
 
         return { name, genericArgs: genericArgs.length > 0 ? genericArgs : undefined, isOptional };
@@ -198,9 +210,11 @@ export class Parser {
         const statements: AST.Statement[] = [];
         let lastExpression: AST.Expression | undefined;
 
+        const statementOnlyTypes = ["VariableDeclaration", "ReturnStatement", "RequireStatement", "DeferStatement", "ForStatement", "WhileStatement", "Assignment", "RawZigBlock"];
         while (this.peek().type !== TokenType.BraceClose && this.peek().type !== TokenType.EOF) {
             const stmt = this.parseStatement();
-            if (this.peek().type === TokenType.BraceClose && (stmt.type !== "VariableDeclaration" && stmt.type !== "ReturnStatement")) {
+            this.match(TokenType.Semicolon);
+            if (this.peek().type === TokenType.BraceClose && !statementOnlyTypes.includes(stmt.type)) {
                 lastExpression = stmt as AST.Expression;
             } else {
                 statements.push(stmt);
@@ -238,6 +252,20 @@ export class Parser {
             const trait = this.expect(TokenType.Identifier, "Expected trait name").value;
             this.match(TokenType.Semicolon);
             return { type: "RequireStatement", target, trait } as AST.RequireStatement;
+        }
+        if (token.type === TokenType.For) {
+            this.advance();
+            const item = this.expect(TokenType.Identifier, "Expected item name in for loop").value;
+            this.expect(TokenType.In, "Expected 'in' after item name");
+            const iterable = this.parseExpression(false);
+            const body = this.parseBlock();
+            return { type: "ForStatement", item, iterable, body } as AST.ForStatement;
+        }
+        if (token.type === TokenType.While) {
+            this.advance();
+            const test = this.parseExpression(false);
+            const body = this.parseBlock();
+            return { type: "WhileStatement", test, body } as AST.WhileStatement;
         }
         if (token.type === TokenType.Defer || token.type === TokenType.ErrDefer) {
             const kind = this.advance().type === TokenType.Defer ? "defer" : "errdefer";
@@ -296,11 +324,22 @@ export class Parser {
 
     private getPrecedence(type: TokenType): number {
         switch (type) {
+            case TokenType.DoubleQuestion:
+                return 4;
+            case TokenType.EqualEqual:
+            case TokenType.BangEqual:
+                return 5;
+            case TokenType.Less:
+            case TokenType.Greater:
+            case TokenType.LessEqual:
+            case TokenType.GreaterEqual:
+                return 7;
             case TokenType.Plus:
             case TokenType.Minus:
                 return 10;
             case TokenType.Star:
             case TokenType.Slash:
+            case TokenType.Percent:
                 return 20;
             default:
                 return 0;
@@ -326,25 +365,27 @@ export class Parser {
         } else if (token.type === TokenType.Number || token.type === TokenType.String) {
             const t = this.advance();
             expr = { type: "Literal", value: t.type === TokenType.Number ? Number(t.value) : t.value, raw: t.value } as AST.Literal;
-        } else if (allowStructInit && token.type === TokenType.Identifier && this.tokens[this.pos + 1]?.type === TokenType.BraceOpen) {
-            const target = { type: "Identifier", name: this.advance().value } as AST.Identifier;
-            this.expect(TokenType.BraceOpen, "Expected '{'");
-            const fields: { name: string, value: AST.Expression }[] = [];
-            while (this.peek().type !== TokenType.BraceClose) {
-                const fName = this.expect(TokenType.Identifier, "Expected field name").value;
-                this.expect(TokenType.Colon, "Expected ':'");
-                const fValue = this.parseExpression();
-                fields.push({ name: fName, value: fValue });
-                this.match(TokenType.Comma);
-            }
-            this.expect(TokenType.BraceClose, "Expected '}'");
-            expr = { type: "StructInitialization", target, fields } as AST.StructInitialization;
+        } else if (token.type === TokenType.Identifier && token.value === "null") {
+            this.advance();
+            expr = { type: "Literal", value: null, raw: "null" } as AST.Literal;
+        } else if (token.type === TokenType.BracketOpen) {
+            const type = this.parseType();
+            expr = { type: "Identifier", name: type.name } as any; // Hack: wrap type as identifier for struct init
         } else if (token.type === TokenType.Identifier || token.type === TokenType.Builtin) {
             expr = { type: "Identifier", name: this.advance().value } as AST.Identifier;
         } else if (token.type === TokenType.ParenOpen) {
             this.advance();
             expr = this.parseExpression();
             this.expect(TokenType.ParenClose, "Expected ')'");
+        } else if (token.type === TokenType.If) {
+            this.advance();
+            const test = this.parseExpression(false);
+            const consequent = this.parseBlockOrExpression();
+            let alternate: AST.Block | AST.Expression | undefined;
+            if (this.match(TokenType.Else)) {
+                alternate = this.parseBlockOrExpression();
+            }
+            expr = { type: "IfExpression", test, consequent, alternate } as AST.IfExpression;
         } else if (token.type === TokenType.Match) {
             this.advance();
             const discriminant = this.parseExpression(false);
@@ -359,9 +400,9 @@ export class Parser {
             }
             this.expect(TokenType.BraceClose, "Expected '}'");
             expr = { type: "MatchExpression", discriminant, arms } as AST.MatchExpression;
-        } else if (token.type === TokenType.Ampersand) {
-            this.advance();
-            expr = { type: "UnaryExpression", operator: "&", argument: this.parsePrimary(allowStructInit) } as AST.UnaryExpression;
+        } else if (token.type === TokenType.Ampersand || token.type === TokenType.Minus || token.type === TokenType.Bang) {
+            const op = this.advance().value;
+            expr = { type: "UnaryExpression", operator: op, argument: this.parsePrimary(allowStructInit) } as AST.UnaryExpression;
         } else if (token.type === TokenType.BraceOpen) {
             expr = this.parseBlock();
         } else if (token.type === TokenType.Dot && this.tokens[this.pos + 1]?.type === TokenType.BraceOpen) {
@@ -400,18 +441,47 @@ export class Parser {
                     callee: expr,
                     args
                 } as AST.CallExpression;
-            } else if (this.match(TokenType.AngleOpen)) {
+            } else if (this.peek().type === TokenType.Less && [TokenType.Identifier, TokenType.BracketOpen, TokenType.Star, TokenType.Self].includes(this.tokens[this.pos+1]?.type)) {
+                this.advance();
                 const genericArgs: AST.Type[] = [];
                 do {
                     genericArgs.push(this.parseType());
                 } while (this.match(TokenType.Comma));
-                this.expect(TokenType.AngleClose, "Expected '>'");
+                this.expect(TokenType.Greater, "Expected '>'");
 
                 expr = {
                     type: "GenericInstantiation",
                     target: expr,
                     args: genericArgs
                 } as AST.GenericInstantiation;
+            } else if (allowStructInit && this.match(TokenType.BraceOpen)) {
+                const fields: { name?: string, value: AST.Expression }[] = [];
+                while (this.peek().type !== TokenType.BraceClose) {
+                    if (this.peek().type === TokenType.Identifier && this.tokens[this.pos + 1]?.type === TokenType.Colon) {
+                        const fName = this.advance().value;
+                        this.advance(); // :
+                        const fValue = this.parseExpression();
+                        fields.push({ name: fName, value: fValue });
+                    } else {
+                        const fValue = this.parseExpression();
+                        fields.push({ value: fValue });
+                    }
+                    this.match(TokenType.Comma);
+                }
+                this.expect(TokenType.BraceClose, "Expected '}'");
+                expr = { type: "StructInitialization", target: expr, fields } as AST.StructInitialization;
+            } else if (this.match(TokenType.BracketOpen)) {
+                const index = this.parseExpression();
+                this.expect(TokenType.BracketClose, "Expected ']' after index");
+                expr = { type: "IndexExpression", object: expr, index } as AST.IndexExpression;
+            } else if (this.match(TokenType.Catch)) {
+                let errorName: string | undefined;
+                if (this.peek().type === TokenType.Identifier && this.tokens[this.pos + 1]?.type === TokenType.Arrow) {
+                    errorName = this.advance().value;
+                    this.advance(); // =>
+                }
+                const right = this.parseBlockOrExpression();
+                expr = { type: "CatchExpression", left: expr, errorName, right } as AST.CatchExpression;
             } else if (this.match(TokenType.Question)) {
                 expr = {
                     type: "UnaryExpression",
@@ -429,6 +499,15 @@ export class Parser {
     private parseStruct(): AST.StructDeclaration {
         this.expect(TokenType.Struct, "Expected 'struct'");
         const name = this.expect(TokenType.Identifier, "Expected struct name").value;
+
+        const genericParams: string[] = [];
+        if (this.match(TokenType.Less)) {
+            do {
+                genericParams.push(this.expect(TokenType.Identifier, "Expected generic parameter name").value);
+            } while (this.match(TokenType.Comma));
+            this.expect(TokenType.Greater, "Expected '>'");
+        }
+
         this.expect(TokenType.BraceOpen, "Expected '{'");
         const fields: AST.Field[] = [];
         while (this.peek().type !== TokenType.BraceClose) {
@@ -439,7 +518,7 @@ export class Parser {
             this.match(TokenType.Comma);
         }
         this.expect(TokenType.BraceClose, "Expected '}'");
-        return { type: "StructDeclaration", name, fields };
+        return { type: "StructDeclaration", name, genericParams: genericParams.length > 0 ? genericParams : undefined, fields };
     }
 
     private parseEnum(): AST.EnumDeclaration {

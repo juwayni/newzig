@@ -54,10 +54,8 @@ export class CodeGenerator {
                 return this.generateUnion(decl);
             case "TraitDeclaration":
                 return this.generateTrait(decl);
-            case "TraitImplementation":
-                return this.generateImpl(decl);
             case "MacroDeclaration":
-                return ""; // Macros are expanded at invocation sites
+                return "";
             default:
                 return "";
         }
@@ -70,7 +68,13 @@ export class CodeGenerator {
 
     private generateFunction(fn: AST.FunctionDeclaration): string {
         const mods = this.generateModifiers(fn.modifiers);
-        const params = fn.params.map(p => `${p.isComptime ? "comptime " : ""}${p.name}: ${this.generateType(p.type)}`).join(", ");
+
+        let params = fn.params.map(p => `${p.isComptime ? "comptime " : ""}${p.name}: ${this.generateType(p.type)}`).join(", ");
+        if (fn.genericParams) {
+            const gps = fn.genericParams.map(gp => `comptime ${gp}: type`).join(", ");
+            params = gps + (params ? ", " + params : "");
+        }
+
         const isMain = fn.name === "main";
         let returnType = fn.returnType ? this.generateType(fn.returnType) : "anyerror!void";
 
@@ -83,7 +87,7 @@ export class CodeGenerator {
         let code = `${mods}fn ${fnName}(${params}) ${returnType} {\n`;
         this.indentLevel++;
         if (fn.body.type === "Block") {
-            code += this.generateBlockBody(fn.body);
+            code += this.generateBlockBody(fn.body, true);
         } else {
             code += `${this.indent()}return ${this.generateExpression(fn.body)};\n`;
         }
@@ -111,13 +115,17 @@ export class CodeGenerator {
         return result;
     }
 
-    private generateBlockBody(block: AST.Block): string {
+    private generateBlockBody(block: AST.Block, shouldReturn = false): string {
         let code = "";
         for (const stmt of block.statements) {
             code += this.generateStatement(stmt) + "\n";
         }
         if (block.lastExpression) {
-            code += `${this.indent()}return ${this.generateExpression(block.lastExpression)};\n`;
+            if (shouldReturn) {
+                code += `${this.indent()}return ${this.generateExpression(block.lastExpression)};\n`;
+            } else {
+                code += `${this.indent()}_ = ${this.generateExpression(block.lastExpression)};\n`;
+            }
         }
         return code;
     }
@@ -134,14 +142,18 @@ export class CodeGenerator {
             case "ReturnStatement":
                 return `${this.indent()}return ${stmt.argument ? this.generateExpression(stmt.argument) : ""};`;
             case "Block":
-                return `${this.indent()}{\n${this.generateBlockBody(stmt)}${this.indent()}}`;
+                return `${this.indent()}{\n${this.generateBlockBody(stmt, false)}${this.indent()}}`;
             case "RequireStatement":
                 return `${this.indent()}comptime ${stmt.trait}.validate(${stmt.target});`;
+            case "ForStatement":
+                return `${this.indent()}for (${this.generateExpression(stmt.iterable)}) |${stmt.item}| {\n${this.generateBlockBody(stmt.body, false)}${this.indent()}}`;
+            case "WhileStatement":
+                return `${this.indent()}while (${this.generateExpression(stmt.test)}) {\n${this.generateBlockBody(stmt.body, false)}${this.indent()}}`;
             case "RawZigBlock":
                 return `${this.indent()}${stmt.code}`;
             case "DeferStatement":
                 const body = stmt.body.type === "Block" ?
-                    `{\n${this.generateBlockBody(stmt.body)}${this.indent()}}` :
+                    `{\n${this.generateBlockBody(stmt.body, false)}${this.indent()}}` :
                     this.generateExpression(stmt.body) + ";";
                 return `${this.indent()}${stmt.kind} ${body}`;
             default:
@@ -172,7 +184,7 @@ export class CodeGenerator {
 
                     matchCode += `${this.indent()}${pattern} => ${capture} `;
                     if (arm.body.type === "Block") {
-                        matchCode += `{\n${this.generateBlockBody(arm.body)}${this.indent()}},\n`;
+                        matchCode += `{\n${this.generateBlockBody(arm.body, false)}${this.indent()}},\n`;
                     } else {
                         matchCode += `${this.generateExpression(arm.body)},\n`;
                     }
@@ -185,12 +197,39 @@ export class CodeGenerator {
                 return expr.raw;
             case "Identifier":
                 return expr.name;
+            case "IfExpression":
+                let ifCode = `if (${this.generateExpression(expr.test)}) `;
+                if (expr.consequent.type === "Block") {
+                    ifCode += `{\n${this.generateBlockBody(expr.consequent, false)}${this.indent()}}`;
+                } else {
+                    ifCode += this.generateExpression(expr.consequent);
+                }
+                if (expr.alternate) {
+                    ifCode += " else ";
+                    if (expr.alternate.type === "Block") {
+                        ifCode += `{\n${this.generateBlockBody(expr.alternate, false)}${this.indent()}}`;
+                    } else {
+                        ifCode += this.generateExpression(expr.alternate);
+                    }
+                }
+                return ifCode;
             case "BinaryExpression":
+                if (expr.operator === "??") {
+                    return `${this.generateExpression(expr.left)} orelse ${this.generateExpression(expr.right)}`;
+                }
                 return `${this.generateExpression(expr.left)} ${expr.operator} ${this.generateExpression(expr.right)}`;
             case "CallExpression":
+                if (expr.callee.type === "GenericInstantiation") {
+                    const target = this.generateExpression(expr.callee.target);
+                    const gArgs = expr.callee.args.map(a => this.generateType(a));
+                    const args = expr.args.map(a => this.generateExpression(a));
+                    return `${target}(${[...gArgs, ...args].join(", ")})`;
+                }
                 return `${this.generateExpression(expr.callee)}(${expr.args.map(a => this.generateExpression(a)).join(", ")})`;
             case "MemberExpression":
                 return `${this.generateExpression(expr.object)}.${expr.property.name}`;
+            case "IndexExpression":
+                return `${this.generateExpression(expr.object)}[${this.generateExpression(expr.index)}]`;
             case "GenericInstantiation":
                 const target = this.generateExpression(expr.target);
                 const args = expr.args.map(a => this.generateType(a)).join(", ");
@@ -214,11 +253,14 @@ export class CodeGenerator {
                 return code;
             case "AnonymousStruct":
                 return `.{ ${expr.elements.map(e => this.generateExpression(e)).join(", ")} }`;
+            case "CatchExpression":
+                const capture = expr.errorName ? `|${expr.errorName}| ` : "";
+                return `${this.generateExpression(expr.left)} catch ${capture}${this.generateExpression(expr.right)}`;
             case "MacroInvocation":
                 return this.expandMacro(expr);
             case "StructInitialization":
                 const sTarget = this.generateExpression(expr.target);
-                const sFields = expr.fields.map(f => `.${f.name} = ${this.generateExpression(f.value)}`).join(", ");
+                const sFields = expr.fields.map(f => f.name ? `.${f.name} = ${this.generateExpression(f.value)}` : this.generateExpression(f.value)).join(", ");
                 return `${sTarget}{ ${sFields} }`;
             default:
                 return "";
@@ -226,14 +268,32 @@ export class CodeGenerator {
     }
 
     private generateStruct(decl: AST.StructDeclaration): string {
-        const mods = this.generateModifiers(decl.modifiers);
-        let code = `const ${decl.name} = ${mods}struct {\n`;
+        let mods = decl.modifiers || [];
+        const typeMods = mods.filter(m => m === "packed" || m === "extern");
+        const declMods = mods.filter(m => m !== "packed" && m !== "extern");
+
+        let declModsStr = declMods.length > 0 ? declMods.join(" ") + " " : "";
+        let typeModsStr = typeMods.length > 0 ? typeMods.join(" ") + " " : "";
+
+        let code = "";
+        if (decl.genericParams) {
+            const gps = decl.genericParams.map(gp => `comptime ${gp}: type`).join(", ");
+            let fnMods = "";
+            if (declModsStr.includes("pub ")) {
+                fnMods = "pub ";
+                declModsStr = declModsStr.replace("pub ", "");
+            }
+            code += `${fnMods}fn ${decl.name}(${gps}) type {\n`;
+            this.indentLevel++;
+            code += `${this.indent()}return ${declModsStr}${typeModsStr}struct {\n`;
+        } else {
+            code += `${declModsStr}const ${decl.name} = ${typeModsStr}struct {\n`;
+        }
         this.indentLevel++;
         for (const field of decl.fields) {
             code += `${this.indent()}${field.name}: ${this.generateType(field.type)},\n`;
         }
 
-        // Find implementations for this struct
         const impls = this.program.body.filter(d =>
             d.type === "TraitImplementation" &&
             (d as AST.TraitImplementation).targetType.name === decl.name
@@ -242,7 +302,6 @@ export class CodeGenerator {
         for (const impl of impls) {
             code += `\n${this.indent()}// Impl ${impl.traitName}\n`;
             for (const method of impl.methods) {
-                // Ensure methods are public for the trait
                 let methodCode = this.generateFunction(method);
                 methodCode = methodCode.replace("fn ", "pub fn ");
                 code += methodCode + "\n";
@@ -250,13 +309,17 @@ export class CodeGenerator {
         }
 
         this.indentLevel--;
-        code += `};\n`;
+        code += `${this.indent()}};\n`;
+        if (decl.genericParams) {
+            this.indentLevel--;
+            code += `}\n`;
+        }
         return code;
     }
 
     private generateEnum(decl: AST.EnumDeclaration): string {
         const mods = this.generateModifiers(decl.modifiers);
-        let code = `const ${decl.name} = ${mods}enum {\n`;
+        let code = `${mods}const ${decl.name} = enum {\n`;
         this.indentLevel++;
         for (const variant of decl.variants) {
             code += `${this.indent()}${variant},\n`;
@@ -267,14 +330,19 @@ export class CodeGenerator {
     }
 
     private generateUnion(decl: AST.UnionDeclaration): string {
-        const mods = this.generateModifiers(decl.modifiers);
-        let code = `const ${decl.name} = ${mods}union(enum) {\n`;
+        let mods = decl.modifiers || [];
+        const typeMods = mods.filter(m => m === "packed" || m === "extern");
+        const declMods = mods.filter(m => m !== "packed" && m !== "extern");
+
+        let declModsStr = declMods.length > 0 ? declMods.join(" ") + " " : "";
+        let typeModsStr = typeMods.length > 0 ? typeMods.join(" ") + " " : "";
+
+        let code = `${declModsStr}const ${decl.name} = ${typeModsStr}union(enum) {\n`;
         this.indentLevel++;
         for (const variant of decl.variants) {
             code += `${this.indent()}${variant.name}${variant.payload ? `: ${this.generateType(variant.payload)}` : ""},\n`;
         }
 
-        // Find implementations
         const impls = this.program.body.filter(d =>
             d.type === "TraitImplementation" &&
             (d as AST.TraitImplementation).targetType.name === decl.name
@@ -310,26 +378,36 @@ export class CodeGenerator {
     }
 
     private generateImpl(decl: AST.TraitImplementation): string {
-        // Handled in generateStruct/generateUnion for Zen types.
-        // For other types, we might need another strategy.
         return "";
     }
 
     private expandMacro(invoc: AST.MacroInvocation): string {
+        if (invoc.name === "print") {
+            const fmt = this.generateExpression(invoc.args[0]);
+            const args = invoc.args.length > 1 ? `.{ ${invoc.args.slice(1).map(a => this.generateExpression(a)).join(", ")} }` : ".{}";
+            return `std.debug.print(${fmt}, ${args})`;
+        }
+        if (invoc.name === "println") {
+            const fmt = this.generateExpression(invoc.args[0]);
+            // Simplified: just append \n to the format string if it's a literal
+            let fmtStr = fmt;
+            if (invoc.args[0].type === "Literal" && typeof invoc.args[0].value === "string") {
+                fmtStr = `"${invoc.args[0].value}\\n"`;
+            }
+            const args = invoc.args.length > 1 ? `.{ ${invoc.args.slice(1).map(a => this.generateExpression(a)).join(", ")} }` : ".{}";
+            return `std.debug.print(${fmtStr}, ${args})`;
+        }
+
         const macro = this.macros.get(invoc.name);
         if (!macro) throw new Error(`Undefined macro: ${invoc.name}`);
 
-        // Simple template substitution by generating the body
-        // and replacing parameter names with argument strings.
-        // This is not perfectly hygienic but works for MVP.
         let body = macro.body.type === "Block" ?
-            this.generateExpression(macro.body) : // This will generate blk: { ... }
+            this.generateExpression(macro.body) :
             this.generateExpression(macro.body);
 
         for (let i = 0; i < macro.params.length; i++) {
             const param = macro.params[i];
             const arg = this.generateExpression(invoc.args[i]);
-            // Use regex to replace parameter name as a whole word
             const re = new RegExp(`\\b${param}\\b`, 'g');
             body = body.replace(re, arg);
         }
