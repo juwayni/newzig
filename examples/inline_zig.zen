@@ -1,0 +1,12 @@
+import std
+
+fn main = (alloc: std.mem.Allocator) => {
+    _ = alloc
+
+    let x = 10
+    zig {
+        std.debug.print("Hello from raw Zig! x is {d}\n", .{x});
+    }
+
+    0
+}

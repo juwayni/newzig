@@ -25,7 +25,10 @@ export type NodeType =
     | "TraitDeclaration"
     | "TraitImplementation"
     | "RequireStatement"
-    | "DeferStatement";
+    | "DeferStatement"
+    | "RawZigBlock"
+    | "MacroDeclaration"
+    | "MacroInvocation";
 
 export interface Node {
     type: NodeType;
@@ -42,7 +45,8 @@ export type TopLevelDeclaration =
     | EnumDeclaration
     | UnionDeclaration
     | TraitDeclaration
-    | TraitImplementation;
+    | TraitImplementation
+    | MacroDeclaration;
 
 export interface ImportDeclaration extends Node {
     type: "ImportDeclaration";
@@ -51,6 +55,7 @@ export interface ImportDeclaration extends Node {
 
 export interface FunctionDeclaration extends Node {
     type: "FunctionDeclaration";
+    modifiers?: string[];
     name: string;
     params: Parameter[];
     returnType?: Type;
@@ -59,6 +64,7 @@ export interface FunctionDeclaration extends Node {
 
 export interface StructDeclaration extends Node {
     type: "StructDeclaration";
+    modifiers?: string[];
     name: string;
     fields: Field[];
 }
@@ -70,12 +76,14 @@ export interface Field {
 
 export interface EnumDeclaration extends Node {
     type: "EnumDeclaration";
+    modifiers?: string[];
     name: string;
     variants: string[];
 }
 
 export interface UnionDeclaration extends Node {
     type: "UnionDeclaration";
+    modifiers?: string[];
     name: string;
     variants: UnionVariant[];
 }
@@ -122,6 +130,7 @@ export type Statement =
     | Assignment
     | RequireStatement
     | DeferStatement
+    | RawZigBlock
     | Expression;
 
 export interface Assignment extends Node {
@@ -132,6 +141,7 @@ export interface Assignment extends Node {
 
 export interface VariableDeclaration extends Node {
     type: "VariableDeclaration";
+    modifiers?: string[];
     name: string;
     kind: "let" | "var";
     declaredType?: Type;
@@ -155,6 +165,24 @@ export interface DeferStatement extends Node {
     body: Expression | Block;
 }
 
+export interface RawZigBlock extends Node {
+    type: "RawZigBlock";
+    code: string;
+}
+
+export interface MacroDeclaration extends Node {
+    type: "MacroDeclaration";
+    name: string;
+    params: string[];
+    body: Expression | Block;
+}
+
+export interface MacroInvocation extends Node {
+    type: "MacroInvocation";
+    name: string;
+    args: Expression[];
+}
+
 export type Expression =
     | BinaryExpression
     | UnaryExpression
@@ -163,6 +191,7 @@ export type Expression =
     | GenericInstantiation
     | StructInitialization
     | AnonymousStruct
+    | MacroInvocation
     | Identifier
     | Literal
     | IfExpression

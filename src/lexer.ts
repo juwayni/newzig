@@ -1,9 +1,10 @@
 export enum TokenType {
     Fn, Let, Var, Import, Struct, Enum, Union, Match, If, Else, Return, Trait, Impl, For, Comptime, Self, Require, Const,
     Defer, ErrDefer,
+    Extern, Export, Packed, Align, NoAlias, CallConv, ThreadLocal, Zig, Macro,
     Identifier, Number, String, Builtin,
     Equals, Arrow, BraceOpen, BraceClose, ParenOpen, ParenClose,
-    AngleOpen, AngleClose, Question, Dot, Comma, Colon, Semicolon, Ampersand,
+    AngleOpen, AngleClose, Question, Dot, Comma, Colon, Semicolon, Ampersand, Bang,
     BracketOpen, BracketClose,
     Plus, Minus, Star, Slash,
     EOF
@@ -14,6 +15,7 @@ export interface Token {
     value: string;
     line: number;
     col: number;
+    pos: number;
 }
 
 export class Lexer {
@@ -83,24 +85,26 @@ export class Lexer {
 
             throw new Error(`Unexpected character: ${char} at ${this.line}:${this.col}`);
         }
-        tokens.push({ type: TokenType.EOF, value: "", line: this.line, col: this.col });
+        tokens.push({ type: TokenType.EOF, value: "", line: this.line, col: this.col, pos: this.pos });
         return tokens;
     }
 
     private readBuiltin(): Token {
         const startLine = this.line;
         const startCol = this.col;
+        const startPos = this.pos;
         let value = this.advance(); // @
         while (/[a-zA-Z0-9_]/.test(this.peek())) {
             value += this.advance();
         }
-        return { type: TokenType.Builtin, value, line: startLine, col: startCol };
+        return { type: TokenType.Builtin, value, line: startLine, col: startCol, pos: startPos };
     }
 
     private readIdentifier(): Token {
         let value = "";
         const startLine = this.line;
         const startCol = this.col;
+        const startPos = this.pos;
         while (/[a-zA-Z0-9_]/.test(this.peek())) {
             value += this.advance();
         }
@@ -126,18 +130,28 @@ export class Lexer {
             "const": TokenType.Const,
             "defer": TokenType.Defer,
             "errdefer": TokenType.ErrDefer,
+            "extern": TokenType.Extern,
+            "export": TokenType.Export,
+            "packed": TokenType.Packed,
+            "align": TokenType.Align,
+            "noalias": TokenType.NoAlias,
+            "callconv": TokenType.CallConv,
+            "threadlocal": TokenType.ThreadLocal,
+            "zig": TokenType.Zig,
+            "macro": TokenType.Macro,
         };
 
         if (value in keywords) {
-            return { type: keywords[value], value, line: startLine, col: startCol };
+            return { type: keywords[value], value, line: startLine, col: startCol, pos: startPos };
         }
-        return { type: TokenType.Identifier, value, line: startLine, col: startCol };
+        return { type: TokenType.Identifier, value, line: startLine, col: startCol, pos: startPos };
     }
 
     private readNumber(): Token {
         let value = "";
         const startLine = this.line;
         const startCol = this.col;
+        const startPos = this.pos;
         while (/[0-9]/.test(this.peek())) {
             value += this.advance();
         }
@@ -147,50 +161,53 @@ export class Lexer {
                 value += this.advance();
             }
         }
-        return { type: TokenType.Number, value, line: startLine, col: startCol };
+        return { type: TokenType.Number, value, line: startLine, col: startCol, pos: startPos };
     }
 
     private readString(): Token {
         let value = "";
         const startLine = this.line;
         const startCol = this.col;
+        const startPos = this.pos;
         this.advance(); // quote
         while (this.peek() !== '"' && this.pos < this.input.length) {
             value += this.advance();
         }
         this.advance(); // quote
-        return { type: TokenType.String, value, line: startLine, col: startCol };
+        return { type: TokenType.String, value, line: startLine, col: startCol, pos: startPos };
     }
 
     private readSymbol(): Token | null {
         const startLine = this.line;
         const startCol = this.col;
+        const startPos = this.pos;
         const char = this.advance();
         const next = this.peek();
 
         if (char === "=" && next === ">") {
             this.advance();
-            return { type: TokenType.Arrow, value: "=>", line: startLine, col: startCol };
+            return { type: TokenType.Arrow, value: "=>", line: startLine, col: startCol, pos: startPos };
         }
-        if (char === "=") return { type: TokenType.Equals, value: "=", line: startLine, col: startCol };
-        if (char === "{") return { type: TokenType.BraceOpen, value: "{", line: startLine, col: startCol };
-        if (char === "}") return { type: TokenType.BraceClose, value: "}", line: startLine, col: startCol };
-        if (char === "(") return { type: TokenType.ParenOpen, value: "(", line: startLine, col: startCol };
-        if (char === ")") return { type: TokenType.ParenClose, value: ")", line: startLine, col: startCol };
-        if (char === "<") return { type: TokenType.AngleOpen, value: "<", line: startLine, col: startCol };
-        if (char === ">") return { type: TokenType.AngleClose, value: ">", line: startLine, col: startCol };
-        if (char === "?") return { type: TokenType.Question, value: "?", line: startLine, col: startCol };
-        if (char === ".") return { type: TokenType.Dot, value: ".", line: startLine, col: startCol };
-        if (char === ",") return { type: TokenType.Comma, value: ",", line: startLine, col: startCol };
-        if (char === ":") return { type: TokenType.Colon, value: ":", line: startLine, col: startCol };
-        if (char === ";") return { type: TokenType.Semicolon, value: ";", line: startLine, col: startCol };
-        if (char === "&") return { type: TokenType.Ampersand, value: "&", line: startLine, col: startCol };
-        if (char === "[") return { type: TokenType.BracketOpen, value: "[", line: startLine, col: startCol };
-        if (char === "]") return { type: TokenType.BracketClose, value: "]", line: startLine, col: startCol };
-        if (char === "+") return { type: TokenType.Plus, value: "+", line: startLine, col: startCol };
-        if (char === "-") return { type: TokenType.Minus, value: "-", line: startLine, col: startCol };
-        if (char === "*") return { type: TokenType.Star, value: "*", line: startLine, col: startCol };
-        if (char === "/") return { type: TokenType.Slash, value: "/", line: startLine, col: startCol };
+        if (char === "=") return { type: TokenType.Equals, value: "=", line: startLine, col: startCol, pos: startPos };
+        if (char === "{") return { type: TokenType.BraceOpen, value: "{", line: startLine, col: startCol, pos: startPos };
+        if (char === "}") return { type: TokenType.BraceClose, value: "}", line: startLine, col: startCol, pos: startPos };
+        if (char === "(") return { type: TokenType.ParenOpen, value: "(", line: startLine, col: startCol, pos: startPos };
+        if (char === ")") return { type: TokenType.ParenClose, value: ")", line: startLine, col: startCol, pos: startPos };
+        if (char === "<") return { type: TokenType.AngleOpen, value: "<", line: startLine, col: startCol, pos: startPos };
+        if (char === ">") return { type: TokenType.AngleClose, value: ">", line: startLine, col: startCol, pos: startPos };
+        if (char === "?") return { type: TokenType.Question, value: "?", line: startLine, col: startCol, pos: startPos };
+        if (char === ".") return { type: TokenType.Dot, value: ".", line: startLine, col: startCol, pos: startPos };
+        if (char === ",") return { type: TokenType.Comma, value: ",", line: startLine, col: startCol, pos: startPos };
+        if (char === ":") return { type: TokenType.Colon, value: ":", line: startLine, col: startCol, pos: startPos };
+        if (char === ";") return { type: TokenType.Semicolon, value: ";", line: startLine, col: startCol, pos: startPos };
+        if (char === "!") return { type: TokenType.Bang, value: "!", line: startLine, col: startCol, pos: startPos };
+        if (char === "&") return { type: TokenType.Ampersand, value: "&", line: startLine, col: startCol, pos: startPos };
+        if (char === "[") return { type: TokenType.BracketOpen, value: "[", line: startLine, col: startCol, pos: startPos };
+        if (char === "]") return { type: TokenType.BracketClose, value: "]", line: startLine, col: startCol, pos: startPos };
+        if (char === "+") return { type: TokenType.Plus, value: "+", line: startLine, col: startCol, pos: startPos };
+        if (char === "-") return { type: TokenType.Minus, value: "-", line: startLine, col: startCol, pos: startPos };
+        if (char === "*") return { type: TokenType.Star, value: "*", line: startLine, col: startCol, pos: startPos };
+        if (char === "/") return { type: TokenType.Slash, value: "/", line: startLine, col: startCol, pos: startPos };
 
         return null;
     }

@@ -4,9 +4,11 @@ import * as AST from "./ast.js";
 export class Parser {
     private tokens: Token[];
     private pos = 0;
+    private input: string;
 
-    constructor(tokens: Token[]) {
+    constructor(tokens: Token[], input: string = "") {
         this.tokens = tokens;
+        this.input = input;
     }
 
     private peek(): Token {
@@ -41,28 +43,60 @@ export class Parser {
         return { type: "Program", body };
     }
 
+    private parseModifiers(): string[] {
+        const modifiers: string[] = [];
+        const modifierTokens = [
+            TokenType.Extern, TokenType.Export, TokenType.Packed,
+            TokenType.Align, TokenType.NoAlias, TokenType.CallConv,
+            TokenType.ThreadLocal
+        ];
+        while (modifierTokens.includes(this.peek().type)) {
+            const mod = this.advance();
+            let value = mod.value;
+            if (mod.type === TokenType.Align || mod.type === TokenType.CallConv) {
+                this.expect(TokenType.ParenOpen, `Expected '(' after ${mod.value}`);
+                value += "(" + this.parseExpression().raw + ")"; // Simplified
+                this.expect(TokenType.ParenClose, `Expected ')' after ${mod.value}`);
+            }
+            modifiers.push(value);
+        }
+        return modifiers;
+    }
+
     private parseTopLevel(): AST.ImportDeclaration | AST.TopLevelDeclaration {
+        const modifiers = this.parseModifiers();
         const token = this.peek();
         if (token.type === TokenType.Import) {
             return this.parseImport();
         }
         if (token.type === TokenType.Fn) {
-            return this.parseFunction();
+            const fn = this.parseFunction();
+            fn.modifiers = modifiers;
+            return fn;
         }
         if (token.type === TokenType.Struct) {
-            return this.parseStruct();
+            const s = this.parseStruct();
+            s.modifiers = modifiers;
+            return s;
         }
         if (token.type === TokenType.Enum) {
-            return this.parseEnum();
+            const e = this.parseEnum();
+            e.modifiers = modifiers;
+            return e;
         }
         if (token.type === TokenType.Union) {
-            return this.parseUnion();
+            const u = this.parseUnion();
+            u.modifiers = modifiers;
+            return u;
         }
         if (token.type === TokenType.Trait) {
             return this.parseTrait();
         }
         if (token.type === TokenType.Impl) {
             return this.parseImpl();
+        }
+        if (token.type === TokenType.Macro) {
+            return this.parseMacro();
         }
         throw new Error(`Unexpected token in top level: ${TokenType[token.type]} at ${token.line}:${token.col}`);
     }
@@ -116,7 +150,7 @@ export class Parser {
             }
         } else if (this.match(TokenType.BracketOpen)) {
             prefix = "[";
-            if (this.peek().type === TokenType.Number) {
+            while (this.peek().type !== TokenType.BracketClose && this.peek().type !== TokenType.EOF) {
                 prefix += this.advance().value;
             }
             this.expect(TokenType.BracketClose, "Expected ']'");
@@ -177,7 +211,26 @@ export class Parser {
     }
 
     private parseStatement(): AST.Statement {
+        const modifiers = this.parseModifiers();
         const token = this.peek();
+        if (token.type === TokenType.Zig) {
+            this.advance();
+            const openBrace = this.expect(TokenType.BraceOpen, "Expected '{' after 'zig'");
+            let braceCount = 1;
+            const startPos = openBrace.pos + 1;
+            let endPos = startPos;
+
+            while (braceCount > 0 && this.peek().type !== TokenType.EOF) {
+                const t = this.advance();
+                if (t.type === TokenType.BraceOpen) braceCount++;
+                if (t.type === TokenType.BraceClose) braceCount--;
+                if (braceCount === 0) {
+                    endPos = t.pos;
+                }
+            }
+            const code = this.input.substring(startPos, endPos);
+            return { type: "RawZigBlock", code } as AST.RawZigBlock;
+        }
         if (token.type === TokenType.Require) {
             this.advance();
             const target = this.expect(TokenType.Identifier, "Expected target identifier").value;
@@ -206,7 +259,7 @@ export class Parser {
             }
             this.expect(TokenType.Equals, "Expected '='");
             const init = this.parseExpression();
-            return { type: "VariableDeclaration", kind, name, declaredType, init } as AST.VariableDeclaration;
+            return { type: "VariableDeclaration", modifiers, kind, name, declaredType, init } as AST.VariableDeclaration;
         }
         const expr = this.parseExpression();
         if (this.match(TokenType.Equals)) {
@@ -258,7 +311,19 @@ export class Parser {
         let expr: AST.Expression;
         const token = this.peek();
 
-        if (token.type === TokenType.Number || token.type === TokenType.String) {
+        if (token.type === TokenType.Identifier && this.tokens[this.pos + 1]?.type === TokenType.Bang) {
+            const name = this.advance().value;
+            this.advance(); // !
+            this.expect(TokenType.ParenOpen, "Expected '(' after macro name!");
+            const args: AST.Expression[] = [];
+            if (this.peek().type !== TokenType.ParenClose) {
+                do {
+                    args.push(this.parseExpression());
+                } while (this.match(TokenType.Comma));
+            }
+            this.expect(TokenType.ParenClose, "Expected ')' after macro args");
+            expr = { type: "MacroInvocation", name, args } as AST.MacroInvocation;
+        } else if (token.type === TokenType.Number || token.type === TokenType.String) {
             const t = this.advance();
             expr = { type: "Literal", value: t.type === TokenType.Number ? Number(t.value) : t.value, raw: t.value } as AST.Literal;
         } else if (allowStructInit && token.type === TokenType.Identifier && this.tokens[this.pos + 1]?.type === TokenType.BraceOpen) {
@@ -435,6 +500,23 @@ export class Parser {
         }
         this.expect(TokenType.BraceClose, "Expected '}'");
         return { type: "TraitDeclaration", name, methods };
+    }
+
+    private parseMacro(): AST.MacroDeclaration {
+        this.expect(TokenType.Macro, "Expected 'macro'");
+        const name = this.expect(TokenType.Identifier, "Expected macro name").value;
+        this.expect(TokenType.Equals, "Expected '='");
+        this.expect(TokenType.ParenOpen, "Expected '('");
+        const params: string[] = [];
+        if (this.peek().type !== TokenType.ParenClose) {
+            do {
+                params.push(this.expect(TokenType.Identifier, "Expected parameter name").value);
+            } while (this.match(TokenType.Comma));
+        }
+        this.expect(TokenType.ParenClose, "Expected ')'");
+        this.expect(TokenType.Arrow, "Expected '=>'");
+        const body = this.parseBlockOrExpression();
+        return { type: "MacroDeclaration", name, params, body };
     }
 
     private parseImpl(): AST.TraitImplementation {

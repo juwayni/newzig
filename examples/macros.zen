@@ -1,0 +1,17 @@
+import std
+
+macro say_hello = (name) => {
+    std.debug.print("Hello, {s}!\n", .{name})
+}
+
+macro add_ten = (n) => n + 10
+
+fn main = (alloc: std.mem.Allocator) => {
+    _ = alloc
+    say_hello!("Zen")
+
+    let x = add_ten!(5)
+    std.debug.print("x is {d}\n", .{x})
+
+    0
+}

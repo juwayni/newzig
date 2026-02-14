@@ -21,6 +21,7 @@ export class SymbolTable {
 export class Checker {
     private globalScope = new SymbolTable();
     private currentScope = this.globalScope;
+    private implementations: Set<string> = new Set();
 
     constructor(private program: AST.Program) {
         this.predefine();
@@ -62,6 +63,8 @@ export class Checker {
             this.globalScope.define(decl.name, { name: "Trait" });
         } else if (decl.type === "TraitImplementation") {
             this.checkTraitImpl(decl);
+        } else if (decl.type === "MacroDeclaration") {
+            this.globalScope.define(decl.name, { name: "Macro" });
         }
     }
 
@@ -69,6 +72,7 @@ export class Checker {
         if (!this.globalScope.lookup(impl.traitName)) {
             throw new Error(`Undefined trait: ${impl.traitName}`);
         }
+        this.implementations.add(`${impl.traitName}:${impl.targetType.name}`);
         for (const method of impl.methods) {
             this.checkFunction(method);
         }
@@ -111,6 +115,8 @@ export class Checker {
             if (!this.globalScope.lookup(stmt.trait)) {
                 throw new Error(`Undefined trait: ${stmt.trait}`);
             }
+            // If it's a concrete type, we can check implementations.
+            // But often it's a generic type parameter.
             return;
         }
         if (stmt.type === "VariableDeclaration") {
@@ -156,6 +162,8 @@ export class Checker {
                 return { name: "any" };
             case "AnonymousStruct":
                 for (const el of expr.elements) this.checkExpression(el);
+                return { name: "any" };
+            case "MacroInvocation":
                 return { name: "any" };
             case "MatchExpression":
                 this.checkExpression(expr.discriminant);

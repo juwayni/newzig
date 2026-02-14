@@ -1,0 +1,23 @@
+import std
+
+// extern fn puts(str: [*:0]const u8): i32;
+
+export fn zen_exported_fn = (a: i32): i32 => {
+    a + 100
+}
+
+packed struct PackedData {
+    a: u8,
+    b: u16,
+}
+
+fn main = (alloc: std.mem.Allocator) => {
+    _ = alloc
+    // let res = puts("Hello from extern puts\n")
+    // _ = res
+
+    let data = PackedData{ a: 1, b: 2 }
+    std.debug.print("Packed: {d} {d}\n", .{data.a, data.b})
+
+    0
+}

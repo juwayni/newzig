@@ -2,8 +2,15 @@ import * as AST from "./ast.js";
 
 export class CodeGenerator {
     private indentLevel = 0;
+    private macros: Map<string, AST.MacroDeclaration> = new Map();
 
-    constructor(private program: AST.Program) {}
+    constructor(private program: AST.Program) {
+        for (const decl of program.body) {
+            if (decl.type === "MacroDeclaration") {
+                this.macros.set(decl.name, decl);
+            }
+        }
+    }
 
     private indent() {
         return "    ".repeat(this.indentLevel);
@@ -49,12 +56,20 @@ export class CodeGenerator {
                 return this.generateTrait(decl);
             case "TraitImplementation":
                 return this.generateImpl(decl);
+            case "MacroDeclaration":
+                return ""; // Macros are expanded at invocation sites
             default:
                 return "";
         }
     }
 
+    private generateModifiers(modifiers?: string[]): string {
+        if (!modifiers || modifiers.length === 0) return "";
+        return modifiers.join(" ") + " ";
+    }
+
     private generateFunction(fn: AST.FunctionDeclaration): string {
+        const mods = this.generateModifiers(fn.modifiers);
         const params = fn.params.map(p => `${p.isComptime ? "comptime " : ""}${p.name}: ${this.generateType(p.type)}`).join(", ");
         const isMain = fn.name === "main";
         let returnType = fn.returnType ? this.generateType(fn.returnType) : "anyerror!void";
@@ -65,7 +80,7 @@ export class CodeGenerator {
             returnType = "anyerror!i32";
         }
 
-        let code = `fn ${fnName}(${params}) ${returnType} {\n`;
+        let code = `${mods}fn ${fnName}(${params}) ${returnType} {\n`;
         this.indentLevel++;
         if (fn.body.type === "Block") {
             code += this.generateBlockBody(fn.body);
@@ -110,9 +125,10 @@ export class CodeGenerator {
     private generateStatement(stmt: AST.Statement): string {
         switch (stmt.type) {
             case "VariableDeclaration":
+                const mods = this.generateModifiers(stmt.modifiers);
                 const kind = stmt.kind === "let" ? "const" : "var";
                 const type = stmt.declaredType ? `: ${this.generateType(stmt.declaredType)}` : "";
-                return `${this.indent()}${kind} ${stmt.name}${type} = ${this.generateExpression(stmt.init)};`;
+                return `${this.indent()}${mods}${kind} ${stmt.name}${type} = ${this.generateExpression(stmt.init)};`;
             case "Assignment":
                 return `${this.indent()}${this.generateExpression(stmt.left)} = ${this.generateExpression(stmt.right)};`;
             case "ReturnStatement":
@@ -121,6 +137,8 @@ export class CodeGenerator {
                 return `${this.indent()}{\n${this.generateBlockBody(stmt)}${this.indent()}}`;
             case "RequireStatement":
                 return `${this.indent()}comptime ${stmt.trait}.validate(${stmt.target});`;
+            case "RawZigBlock":
+                return `${this.indent()}${stmt.code}`;
             case "DeferStatement":
                 const body = stmt.body.type === "Block" ?
                     `{\n${this.generateBlockBody(stmt.body)}${this.indent()}}` :
@@ -196,6 +214,8 @@ export class CodeGenerator {
                 return code;
             case "AnonymousStruct":
                 return `.{ ${expr.elements.map(e => this.generateExpression(e)).join(", ")} }`;
+            case "MacroInvocation":
+                return this.expandMacro(expr);
             case "StructInitialization":
                 const sTarget = this.generateExpression(expr.target);
                 const sFields = expr.fields.map(f => `.${f.name} = ${this.generateExpression(f.value)}`).join(", ");
@@ -206,7 +226,8 @@ export class CodeGenerator {
     }
 
     private generateStruct(decl: AST.StructDeclaration): string {
-        let code = `const ${decl.name} = struct {\n`;
+        const mods = this.generateModifiers(decl.modifiers);
+        let code = `const ${decl.name} = ${mods}struct {\n`;
         this.indentLevel++;
         for (const field of decl.fields) {
             code += `${this.indent()}${field.name}: ${this.generateType(field.type)},\n`;
@@ -234,7 +255,8 @@ export class CodeGenerator {
     }
 
     private generateEnum(decl: AST.EnumDeclaration): string {
-        let code = `const ${decl.name} = enum {\n`;
+        const mods = this.generateModifiers(decl.modifiers);
+        let code = `const ${decl.name} = ${mods}enum {\n`;
         this.indentLevel++;
         for (const variant of decl.variants) {
             code += `${this.indent()}${variant},\n`;
@@ -245,7 +267,8 @@ export class CodeGenerator {
     }
 
     private generateUnion(decl: AST.UnionDeclaration): string {
-        let code = `const ${decl.name} = union(enum) {\n`;
+        const mods = this.generateModifiers(decl.modifiers);
+        let code = `const ${decl.name} = ${mods}union(enum) {\n`;
         this.indentLevel++;
         for (const variant of decl.variants) {
             code += `${this.indent()}${variant.name}${variant.payload ? `: ${this.generateType(variant.payload)}` : ""},\n`;
@@ -290,5 +313,26 @@ export class CodeGenerator {
         // Handled in generateStruct/generateUnion for Zen types.
         // For other types, we might need another strategy.
         return "";
+    }
+
+    private expandMacro(invoc: AST.MacroInvocation): string {
+        const macro = this.macros.get(invoc.name);
+        if (!macro) throw new Error(`Undefined macro: ${invoc.name}`);
+
+        // Simple template substitution by generating the body
+        // and replacing parameter names with argument strings.
+        // This is not perfectly hygienic but works for MVP.
+        let body = macro.body.type === "Block" ?
+            this.generateExpression(macro.body) : // This will generate blk: { ... }
+            this.generateExpression(macro.body);
+
+        for (let i = 0; i < macro.params.length; i++) {
+            const param = macro.params[i];
+            const arg = this.generateExpression(invoc.args[i]);
+            // Use regex to replace parameter name as a whole word
+            const re = new RegExp(`\\b${param}\\b`, 'g');
+            body = body.replace(re, arg);
+        }
+        return body;
     }
 }

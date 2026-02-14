@@ -9,10 +9,9 @@ const MyLogger = struct {
     id: i32,
 
     // Impl Logger
-pub fn log(self: *MyLogger, msg: []const u8) void {
+    pub fn log(self: *MyLogger, msg: []const u8) void {
         return std.debug.print("Logger {d}: {s}\n", .{ self.id, msg });
     }
-
 };
 
 fn useLogger(comptime T: type, logger: *T) void {

@@ -1,9 +1,12 @@
 const std = @import("std");
+
 fn zen_main(alloc: std.mem.Allocator) anyerror!i32 {
-    var list = std.ArrayList(i32).init(alloc);
-    defer list.deinit();
-    _ = try list.append(100);
-    _ = std.debug.print("List length inside: {d}\n", .{list.items.len});
+    _ = alloc;
+    _ = blk: {
+        break :blk std.debug.print("Hello, {s}!\n", .{"Zen"});
+    };
+    const x = 5 + 10;
+    _ = std.debug.print("x is {d}\n", .{x});
     return 0;
 }
 

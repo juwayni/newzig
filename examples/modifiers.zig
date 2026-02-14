@@ -1,13 +1,17 @@
 const std = @import("std");
-fn add(a: i32, b: i32) anyerror!void {
-    return a + b;
+export fn zen_exported_fn(a: i32) i32 {
+    return a + 100;
 }
 
+const PackedData = packed struct {
+    a: u8,
+    b: u16,
+};
+
 fn zen_main(alloc: std.mem.Allocator) anyerror!i32 {
-    var list = std.ArrayList(i32).init(alloc);
-    _ = try list.append(10);
-    _ = try list.append(20);
-    _ = std.debug.print("List length: {d}\n", .{list.items.len});
+    _ = alloc;
+    const data = PackedData{ .a = 1, .b = 2 };
+    _ = std.debug.print("Packed: {d} {d}\n", .{ data.a, data.b });
     return 0;
 }
 

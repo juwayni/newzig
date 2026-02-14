@@ -9,7 +9,7 @@ fn getArea(shape: Shape) f32 {
     return switch (shape) {
         .Circle => |r| r * r * 3.14,
         .Square => |s| s * s,
-        .None =>  0.0,
+        .None => 0.0,
     };
 }
 
@@ -17,7 +17,7 @@ fn zen_main(alloc: std.mem.Allocator) anyerror!i32 {
     _ = alloc;
     const c = Shape{ .Circle = 10.0 };
     const area = getArea(c);
-    _ = std.debug.print("Area: {d}\n", .{ area });
+    _ = std.debug.print("Area: {d}\n", .{area});
     return 0;
 }
 

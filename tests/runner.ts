@@ -10,7 +10,7 @@ export function compileAndRun(zenFile: string) {
     const code = fs.readFileSync(zenFile, "utf8");
     const lexer = new Lexer(code);
     const tokens = lexer.tokenize();
-    const parser = new Parser(tokens);
+    const parser = new Parser(tokens, code);
     const ast = parser.parse();
     const checker = new Checker(ast);
     checker.check();
@@ -20,6 +20,13 @@ export function compileAndRun(zenFile: string) {
     const zigFile = zenFile.replace(".zen", ".zig");
     fs.writeFileSync(zigFile, zigCode);
     console.log(`Saved to ${zigFile}`);
+
+    console.log(`Formatting ${zigFile}...`);
+    try {
+        execSync(`./zig/zig fmt ${zigFile}`);
+    } catch (e) {
+        console.warn("Zig fmt failed, but continuing...");
+    }
 
     console.log(`Running zig run ${zigFile}...`);
     try {
