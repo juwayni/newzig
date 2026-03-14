@@ -1,13 +1,14 @@
 const std = @import("std");
-fn add(a: i32, b: i32) i32 {
-    return a + b;
-}
+const Data = struct {
+    x: i32,
+    y: i32,
+};
 
 fn zen_main(alloc: std.mem.Allocator) anyerror!i32 {
-    var list = std.ArrayList(i32).init(alloc);
-    _ = try list.append(10);
-    _ = try list.append(20);
-    _ = std.debug.print("List length: {d}\n", .{list.items.len});
+    _ = alloc;
+    const d = Data{ .x = 1, .y = 2 };
+    const anon = .{ 10, 20 };
+    _ = std.debug.print("Data: {d} {d}, Anon: {any}\n", .{ d.x, d.y, anon });
     return 0;
 }
 

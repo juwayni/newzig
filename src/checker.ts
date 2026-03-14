@@ -36,23 +36,26 @@ export class Checker {
         for (const t of types) {
             this.globalScope.define(t, { name: "Type" });
         }
+        this.globalScope.define("error", { name: "ErrorSet" });
     }
 
     public check() {
+        // First pass: define all top-level declarations
+        for (const decl of this.program.body) {
+            this.defineTopLevel(decl);
+        }
+        // Second pass: full body check
         for (const decl of this.program.body) {
             this.checkTopLevel(decl);
         }
     }
 
-    private checkTopLevel(decl: AST.ImportDeclaration | AST.TopLevelDeclaration) {
+    private defineTopLevel(decl: AST.ImportDeclaration | AST.TopLevelDeclaration) {
         if (decl.type === "ImportDeclaration") {
             const parts = decl.module.split(".");
-            this.globalScope.define(parts[0], { name: "Module" });
+            this.globalScope.define(parts[0], { name: parts[0] });
         } else if (decl.type === "FunctionDeclaration") {
-            this.globalScope.define(decl.name, {
-                name: "Function",
-            });
-            this.checkFunction(decl);
+            this.globalScope.define(decl.name, { name: "Function" });
         } else if (decl.type === "StructDeclaration") {
             this.globalScope.define(decl.name, { name: "Type" });
         } else if (decl.type === "EnumDeclaration") {
@@ -61,10 +64,16 @@ export class Checker {
             this.globalScope.define(decl.name, { name: "Type" });
         } else if (decl.type === "TraitDeclaration") {
             this.globalScope.define(decl.name, { name: "Trait" });
-        } else if (decl.type === "TraitImplementation") {
-            this.checkTraitImpl(decl);
         } else if (decl.type === "MacroDeclaration") {
             this.globalScope.define(decl.name, { name: "Macro" });
+        }
+    }
+
+    private checkTopLevel(decl: AST.ImportDeclaration | AST.TopLevelDeclaration) {
+        if (decl.type === "FunctionDeclaration") {
+            this.checkFunction(decl);
+        } else if (decl.type === "TraitImplementation") {
+            this.checkTraitImpl(decl);
         }
     }
 
@@ -86,16 +95,21 @@ export class Checker {
             this.currentScope.define(param.name, param.type);
         }
 
+        let inferredType: AST.Type;
         if (fn.body.type === "Block") {
-            this.checkBlock(fn.body);
+            inferredType = this.checkBlock(fn.body);
         } else {
-            this.checkExpression(fn.body);
+            inferredType = this.checkExpression(fn.body);
+        }
+
+        if (!fn.returnType && inferredType.name !== "any") {
+            fn.returnType = inferredType;
         }
 
         this.currentScope = parentScope;
     }
 
-    private checkBlock(block: AST.Block) {
+    private checkBlock(block: AST.Block): AST.Type {
         const parentScope = this.currentScope;
         this.currentScope = new SymbolTable(parentScope);
 
@@ -103,11 +117,13 @@ export class Checker {
             this.checkStatement(stmt);
         }
 
+        let type: AST.Type = { name: "void" };
         if (block.lastExpression) {
-            this.checkExpression(block.lastExpression);
+            type = this.checkExpression(block.lastExpression);
         }
 
         this.currentScope = parentScope;
+        return type;
     }
 
     private checkStatement(stmt: AST.Statement) {
@@ -133,36 +149,63 @@ export class Checker {
     private checkExpression(expr: AST.Expression): AST.Type {
         switch (expr.type) {
             case "Literal":
-                if (typeof expr.value === "number") return { name: "i32" };
+                if (typeof expr.value === "number") {
+                    if (expr.raw.includes(".")) return { name: "f32" };
+                    return { name: "i32" };
+                }
                 if (typeof expr.value === "string") return { name: "[]const u8" };
+                if (expr.value === null) return { name: "any" };
                 return { name: "any" };
             case "Identifier":
                 if (expr.name.startsWith("@")) return { name: "any" };
+                if (expr.name === "true" || expr.name === "false") return { name: "bool" };
                 const sym = this.currentScope.lookup(expr.name);
                 if (!sym) throw new Error(`Undefined identifier: ${expr.name}`);
                 return sym.type;
             case "BinaryExpression":
-                this.checkExpression(expr.left);
-                this.checkExpression(expr.right);
+                const left = this.checkExpression(expr.left);
+                const right = this.checkExpression(expr.right);
+                if (["==", "!=", "<", ">", "<=", ">="].includes(expr.operator)) return { name: "bool" };
+                if (expr.operator === "??") return right;
+                if (left.name !== "any") return left;
+                if (right.name !== "any") return right;
                 return { name: "any" };
             case "CallExpression":
                 this.checkExpression(expr.callee);
                 for (const arg of expr.args) this.checkExpression(arg);
                 return { name: "any" };
             case "MemberExpression":
-                this.checkExpression(expr.object);
+                const objType = this.checkExpression(expr.object);
+                if (objType.name === "std") {
+                    if (expr.property.name === "debug") return { name: "std.debug" };
+                }
+                if (objType.name === "std.debug") {
+                    if (expr.property.name === "print") return { name: "Function" };
+                }
                 return { name: "any" };
             case "GenericInstantiation":
                 this.checkExpression(expr.target);
                 return { name: "any" };
             case "UnaryExpression":
-                return this.checkExpression(expr.argument);
+                let t = this.checkExpression(expr.argument);
+                if (expr.operator === "?") {
+                    if (t.name.startsWith("!")) return { ...t, name: t.name.substring(1) };
+                    return t;
+                }
+                return t;
             case "Block":
-                this.checkBlock(expr);
-                return { name: "any" };
+                return this.checkBlock(expr);
             case "AnonymousStruct":
                 for (const el of expr.elements) this.checkExpression(el);
                 return { name: "any" };
+            case "IfExpression":
+                this.checkExpression(expr.test);
+                const consType = expr.consequent.type === "Block" ? this.checkBlock(expr.consequent) : this.checkExpression(expr.consequent);
+                if (expr.alternate) {
+                    const altType = expr.alternate.type === "Block" ? this.checkBlock(expr.alternate) : this.checkExpression(expr.alternate);
+                    if (consType.name === altType.name) return consType;
+                }
+                return consType;
             case "MacroInvocation":
                 return { name: "any" };
             case "MatchExpression":

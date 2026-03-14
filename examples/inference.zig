@@ -3,11 +3,15 @@ fn add(a: i32, b: i32) i32 {
     return a + b;
 }
 
+fn get_name() []const u8 {
+    return "Zen";
+}
+
 fn zen_main(alloc: std.mem.Allocator) anyerror!i32 {
-    var list = std.ArrayList(i32).init(alloc);
-    _ = try list.append(10);
-    _ = try list.append(20);
-    _ = std.debug.print("List length: {d}\n", .{list.items.len});
+    _ = alloc;
+    const sum = add(10, 20);
+    const name = get_name();
+    _ = std.debug.print("Sum: {d}, Name: {s}\n", .{ sum, name });
     return 0;
 }
 

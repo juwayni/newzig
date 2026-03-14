@@ -1,0 +1,14 @@
+import std
+
+struct Data {
+    x: i32,
+    y: i32
+}
+
+fn main = (alloc: std.mem.Allocator) => {
+    _ = alloc
+    let d = Data{ x: 1, y: 2 }
+    let anon = .{ 10, 20 }
+    std.debug.print("Data: {d} {d}, Anon: {any}\n", .{d.x, d.y, anon})
+    0
+}

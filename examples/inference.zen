@@ -1,0 +1,12 @@
+import std
+fn add = (a: i32, b: i32) => a + b
+
+fn get_name = () => "Zen"
+
+fn main = (alloc: std.mem.Allocator) => {
+    _ = alloc
+    let sum = add(10, 20)
+    let name = get_name()
+    std.debug.print("Sum: {d}, Name: {s}\n", .{sum, name})
+    0
+}

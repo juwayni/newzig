@@ -401,16 +401,104 @@ export class CodeGenerator {
         const macro = this.macros.get(invoc.name);
         if (!macro) throw new Error(`Undefined macro: ${invoc.name}`);
 
-        let body = macro.body.type === "Block" ?
-            this.generateExpression(macro.body) :
-            this.generateExpression(macro.body);
-
+        const paramMap = new Map<string, AST.Expression>();
         for (let i = 0; i < macro.params.length; i++) {
-            const param = macro.params[i];
-            const arg = this.generateExpression(invoc.args[i]);
-            const re = new RegExp(`\\b${param}\\b`, 'g');
-            body = body.replace(re, arg);
+            paramMap.set(macro.params[i], invoc.args[i]);
         }
-        return body;
+
+        const expandedBody = this.substituteMacroParams(macro.body, paramMap);
+        return expandedBody.type === "Block" ? this.generateExpression(expandedBody) : this.generateExpression(expandedBody);
+    }
+
+    private substituteMacroParams(node: AST.Expression | AST.Block, params: Map<string, AST.Expression>): AST.Expression | AST.Block {
+        // Deep clone and substitute
+        if (node.type === "Identifier") {
+            if (params.has(node.name)) {
+                return JSON.parse(JSON.stringify(params.get(node.name)));
+            }
+            return { ...node };
+        }
+        if (node.type === "Literal") return { ...node };
+
+        if (node.type === "BinaryExpression") {
+            return {
+                ...node,
+                left: this.substituteMacroParams(node.left, params) as AST.Expression,
+                right: this.substituteMacroParams(node.right, params) as AST.Expression
+            };
+        }
+
+        if (node.type === "CallExpression") {
+            return {
+                ...node,
+                callee: this.substituteMacroParams(node.callee, params) as AST.Expression,
+                args: node.args.map(a => this.substituteMacroParams(a, params) as AST.Expression)
+            };
+        }
+
+        if (node.type === "Block") {
+            return {
+                ...node,
+                statements: node.statements.map(s => {
+                    // This is simplified, we should handle all statement types
+                    if (s.type === "VariableDeclaration") {
+                        return { ...s, init: this.substituteMacroParams(s.init, params) as AST.Expression };
+                    }
+                    if (s.type === "ReturnStatement" && s.argument) {
+                        return { ...s, argument: this.substituteMacroParams(s.argument, params) as AST.Expression };
+                    }
+                    if (s.type === "Assignment") {
+                        return {
+                            ...s,
+                            left: this.substituteMacroParams(s.left as AST.Expression, params) as AST.Expression,
+                            right: this.substituteMacroParams(s.right, params) as AST.Expression
+                        };
+                    }
+                    if (s.type === "DeferStatement") {
+                         return { ...s, body: this.substituteMacroParams(s.body as AST.Expression, params) as AST.Expression | AST.Block };
+                    }
+                    try {
+                        return this.substituteMacroParams(s as AST.Expression, params) as any;
+                    } catch {
+                        return s;
+                    }
+                }),
+                lastExpression: node.lastExpression ? this.substituteMacroParams(node.lastExpression, params) as AST.Expression : undefined
+            };
+        }
+
+        if (node.type === "MemberExpression") {
+            return {
+                ...node,
+                object: this.substituteMacroParams(node.object, params) as AST.Expression
+            };
+        }
+
+        if (node.type === "AnonymousStruct") {
+            return {
+                ...node,
+                elements: node.elements.map(e => this.substituteMacroParams(e, params) as AST.Expression)
+            };
+        }
+
+        if (node.type === "StructInitialization") {
+            return {
+                ...node,
+                target: this.substituteMacroParams(node.target, params) as AST.Expression,
+                fields: node.fields.map(f => ({ ...f, value: this.substituteMacroParams(f.value, params) as AST.Expression }))
+            };
+        }
+
+        if (node.type === "IfExpression") {
+            return {
+                ...node,
+                test: this.substituteMacroParams(node.test, params) as AST.Expression,
+                consequent: this.substituteMacroParams(node.consequent, params) as AST.Expression | AST.Block,
+                alternate: node.alternate ? this.substituteMacroParams(node.alternate, params) as AST.Expression | AST.Block : undefined
+            };
+        }
+
+        // Add more nodes as needed for full coverage
+        return JSON.parse(JSON.stringify(node));
     }
 }
